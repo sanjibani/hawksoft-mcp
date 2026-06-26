@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "sanjibani", email = "sanjibani@users.noreply.github.com" },
+    { name = "Sanjibani Choudhury", email = "schoudhury1991@gmail.com" },
 ]
 keywords = ["mcp", "model-context-protocol", "hawksoft", "insurance", "agency-management", "ai-agent", "claude"]
 
