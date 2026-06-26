@@ -56,6 +56,81 @@ DEFAULT_MAX_RETRY_DELAY = 30.0
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
+# --- HTTP status → exception dispatch ---------------------------------------
+#
+# Single source of truth for "given an HTTP status code, which typed exception
+# do we raise?". Each entry is (matcher, ExceptionClass, message_builder).
+# Adding a new status code = one row, no new if/elif branches.
+
+
+from collections.abc import Callable  # noqa: E402  (placed here for top-down readability)
+
+
+def _extract_request_id(response: httpx.Response) -> str | None:
+    """Pull the upstream request id from common header locations."""
+    rid = (
+        response.headers.get("x-request-id")
+        or response.headers.get("x-amzn-requestid")
+        or response.headers.get("request-id")
+    )
+    return str(rid) if rid is not None else None
+
+
+def _safe_json_or_text(response: httpx.Response) -> Any:
+    """Parse response body as JSON; fall back to plain text on parse failure."""
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
+
+
+def _parse_retry_after(response: httpx.Response) -> float | None:
+    """Parse the ``Retry-After`` header (RFC 7231 §7.1.3) as a float seconds value."""
+    with contextlib.suppress(ValueError, TypeError):
+        ra_header = response.headers.get("retry-after")
+        if ra_header:
+            return float(ra_header)
+    return None
+
+
+def _msg_auth_401(_: httpx.Response) -> str:
+    return "HawkSoft rejected the credentials (HTTP 401)."
+
+
+def _msg_auth_403(_: httpx.Response) -> str:
+    return (
+        "HawkSoft denied access to this resource (HTTP 403). "
+        "The agency may not have subscribed to your vendor app."
+    )
+
+
+def _msg_not_found(r: httpx.Response) -> str:
+    return f"HawkSoft resource not found: {r.url}"
+
+
+def _msg_rate_limit(_: httpx.Response) -> str:
+    return "HawkSoft rate limit hit (HTTP 429). Slow down."
+
+
+def _msg_server_error(r: httpx.Response) -> str:
+    return f"HawkSoft server error (HTTP {r.status_code})"
+
+
+_STATUS_DISPATCH: list[
+    tuple[
+        Callable[[int], bool],
+        type[HawkSoftError],
+        Callable[[httpx.Response], str],
+    ]
+] = [
+    (lambda c: c == 401, HawkSoftAuthError, _msg_auth_401),
+    (lambda c: c == 403, HawkSoftAuthError, _msg_auth_403),
+    (lambda c: c == 404, HawkSoftNotFoundError, _msg_not_found),
+    (lambda c: c == 429, HawkSoftRateLimitError, _msg_rate_limit),
+    (lambda c: 500 <= c < 600, HawkSoftAPIError, _msg_server_error),
+]
+
+
 # --- Internal helpers ------------------------------------------------------
 
 
@@ -149,63 +224,38 @@ class HawkSoftClient:
     # --- Request execution ----------------------------------------------------
 
     def _raise_for_status(self, response: httpx.Response) -> None:
-        """Map a non-2xx response to the most specific typed exception."""
-        request_id = (
-            response.headers.get("x-request-id")
-            or response.headers.get("x-amzn-requestid")
-            or response.headers.get("request-id")
-        )
-        try:
-            data = response.json()
-        except ValueError:
-            data = response.text
+        """Map a non-2xx response to the most specific typed exception.
 
-        if response.status_code == 401:
-            raise HawkSoftAuthError(
-                "HawkSoft rejected the credentials (HTTP 401).",
-                http_status=401,
-                request_id=request_id,
-                body=data,
-            )
-        if response.status_code == 403:
-            raise HawkSoftAuthError(
-                "HawkSoft denied access to this resource (HTTP 403). "
-                "The agency may not have subscribed to your vendor app.",
-                http_status=403,
-                request_id=request_id,
-                body=data,
-            )
-        if response.status_code == 404:
-            raise HawkSoftNotFoundError(
-                f"HawkSoft resource not found: {response.url}",
-                http_status=404,
-                request_id=request_id,
-                body=data,
-            )
-        if response.status_code == 429:
-            retry_after: float | None = None
-            with contextlib.suppress(ValueError):
-                ra_header = response.headers.get("retry-after")
-                if ra_header:
-                    retry_after = float(ra_header)
-            raise HawkSoftRateLimitError(
-                "HawkSoft rate limit hit (HTTP 429). Slow down.",
-                retry_after=retry_after,
-                request_id=request_id,
-                body=data,
-            )
-        if 500 <= response.status_code < 600:
-            raise HawkSoftAPIError(
-                f"HawkSoft server error (HTTP {response.status_code})",
-                http_status=response.status_code,
-                request_id=request_id,
-                body=data,
-            )
+        Dispatch table maps HTTP status codes to (ExceptionClass, message
+        builder). Adding a new status code = one row, no new branches.
+        """
+        request_id = _extract_request_id(response)
+        body = _safe_json_or_text(response)
+        retry_after = _parse_retry_after(response)
+
+        for matcher, exc_cls, msg_fn in _STATUS_DISPATCH:
+            if matcher(response.status_code):
+                if exc_cls is HawkSoftRateLimitError:
+                    raise exc_cls(
+                        msg_fn(response),
+                        http_status=response.status_code,
+                        request_id=request_id,
+                        body=body,
+                        retry_after=retry_after,
+                    )
+                raise exc_cls(
+                    msg_fn(response),
+                    http_status=response.status_code,
+                    request_id=request_id,
+                    body=body,
+                )
+
+        # Fallback for any 3xx or other non-2xx we haven't classified.
         raise HawkSoftAPIError(
             f"HawkSoft returned HTTP {response.status_code}",
             http_status=response.status_code,
             request_id=request_id,
-            body=data,
+            body=body,
         )
 
     async def _request(
