@@ -10,7 +10,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 TaskRole = Literal["SpecifiedUser", "Producer", "CSR", "Agent1", "Agent2", "Agent3"]
 IncludeSection = Literal["details", "people", "contacts", "claims", "policies", "invoices"]
 

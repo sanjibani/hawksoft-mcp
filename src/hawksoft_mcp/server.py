@@ -18,19 +18,28 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import structlog
 from mcp.server.fastmcp import FastMCP
 
-from .client import HawkSoftAPIError, HawkSoftAuthError, HawkSoftClient, HawkSoftError
+from .client import HawkSoftClient
+from .exceptions import (
+    HawkSoftAPIError,
+    HawkSoftAuthError,
+    HawkSoftConnectionError,
+    HawkSoftError,
+    HawkSoftNotFoundError,
+    HawkSoftRateLimitError,
+)
 from .log_actions import list_channels, resolve_channel
 from .models import (
-    AttachmentInput,
     BulkClientsInput,
     ChangedClientsInput,
     GetClientInput,
-    LogNoteInput,
     ReceiptsInput,
     SearchByPolicyInput,
 )
+
+log = structlog.get_logger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -51,8 +60,16 @@ def _format_error(e: Exception) -> str:
             "Authentication failed against HawkSoft. Verify HAWKSOFT_USERNAME "
             f"and HAWKSOFT_PASSWORD. Details: {e}"
         )
+    if isinstance(e, HawkSoftNotFoundError):
+        return f"Resource not found: {e}"
+    if isinstance(e, HawkSoftRateLimitError):
+        wait = f" Retry in {e.retry_after}s." if e.retry_after else ""
+        return f"HawkSoft rate limit hit.{wait} Slow down."
+    if isinstance(e, HawkSoftConnectionError):
+        return f"Network failure talking to HawkSoft: {e}"
     if isinstance(e, HawkSoftAPIError):
-        return f"HawkSoft API error (HTTP {e.status_code}): {e}"
+        request_id = f" (request_id: {e.request_id})" if e.request_id else ""
+        return f"HawkSoft API error (HTTP {e.http_status}){request_id}: {e}"
     if isinstance(e, HawkSoftError):
         return f"HawkSoft error: {e}"
     return f"Unexpected error: {e!r}"
@@ -173,7 +190,7 @@ async def get_client(
         client_id: HawkSoft client number.
         include: Sections to include: details, people, contacts, claims, policies, invoices.
     """
-    GetClientInput(agency_id=agency_id, client_id=client_id, include=include)
+    GetClientInput(agency_id=agency_id, client_id=client_id, include=include)  # type: ignore[arg-type]  # Pydantic Literal narrowing
     try:
         result = await _client().get_client(agency_id, client_id, include=include)
         return _json(result)
@@ -187,7 +204,7 @@ async def get_clients_bulk(agency_id: int, client_numbers: list[int]) -> str:
 
     Args:
         agency_id: HawkSoft agency ID.
-        client_numbers: List of client numbers (1–200 per call).
+        client_numbers: List of client numbers (1-200 per call).
     """
     BulkClientsInput(agency_id=agency_id, client_numbers=client_numbers)
     try:
@@ -215,7 +232,7 @@ async def search_client_by_policy(
         include: Sections to include.
     """
     SearchByPolicyInput(
-        agency_id=agency_id, policy_number=policy_number, include=include
+        agency_id=agency_id, policy_number=policy_number, include=include  # type: ignore[arg-type]
     )
     try:
         result = await _client().search_client_by_policy(
@@ -397,7 +414,7 @@ async def create_receipts(
             - ``invoices``: list of ``{"invoiceId": "<guid>", "amount": <float>}``
         Optional per receipt: refId, ts, policyId, officeId, payMethod, task.
     """
-    ReceiptsInput(agency_id=agency_id, client_id=client_id, receipts=receipts)
+    ReceiptsInput(agency_id=agency_id, client_id=client_id, receipts=receipts)  # type: ignore[arg-type]
     # Resolve channel names in each receipt before sending
     resolved = []
     for receipt in receipts:
@@ -444,7 +461,7 @@ def main() -> None:
     try:
         mcp.run()
     except HawkSoftAuthError as e:
-        print(f"[hawksoft-mcp] {e}", file=sys.stderr)
+        log.error("server.auth_failed_on_start", error=str(e))
         sys.exit(1)
 
 
