@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 from mcp.server.fastmcp import FastMCP
 
+from .audit import audit_tool_call
 from .client import HawkSoftClient
 from .exceptions import (
     HawkSoftAPIError,
@@ -110,11 +111,14 @@ async def list_agencies() -> str:
     insurance agency that has opted in to data sharing with your app via the
     HawkSoft License Management Portal.
     """
-    try:
-        result = await _client().list_agencies()
-        return _json({"agency_ids": result, "count": len(result)})
-    except HawkSoftError:
-        raise
+    with audit_tool_call("list_agencies", {}) as audit:
+        try:
+            result = await _client().list_agencies()
+            out = _json({"agency_ids": result, "count": len(result)})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -124,11 +128,14 @@ async def list_offices(agency_id: int) -> str:
     Args:
         agency_id: HawkSoft agency ID (from list_agencies).
     """
-    try:
-        result = await _client().list_offices(agency_id)
-        return _json({"agency_id": agency_id, "offices": result, "count": len(result)})
-    except HawkSoftError:
-        raise
+    with audit_tool_call("list_offices", {"agency_id": agency_id}) as audit:
+        try:
+            result = await _client().list_offices(agency_id)
+            out = _json({"agency_id": agency_id, "offices": result, "count": len(result)})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -150,28 +157,39 @@ async def list_changed_clients(
         office_id: Restrict to a specific office.
         include_deleted: Include soft-deleted clients.
     """
-    # Pydantic validation
-    ChangedClientsInput(
-        agency_id=agency_id,
-        as_of=as_of,
-        office_id=office_id,
-        include_deleted=include_deleted,
-    )
-    try:
-        result = await _client().get_changed_clients(
-            agency_id,
-            as_of=as_of,
-            office_id=office_id,
-            deleted=include_deleted or None,
-        )
-        return _json({
+    with audit_tool_call(
+        "list_changed_clients",
+        {
             "agency_id": agency_id,
             "as_of": as_of,
-            "client_ids": result,
-            "count": len(result),
-        })
-    except HawkSoftError:
-        raise
+            "office_id": office_id,
+            "include_deleted": include_deleted,
+        },
+    ) as audit:
+        # Pydantic validation
+        ChangedClientsInput(
+            agency_id=agency_id,
+            as_of=as_of,
+            office_id=office_id,
+            include_deleted=include_deleted,
+        )
+        try:
+            result = await _client().get_changed_clients(
+                agency_id,
+                as_of=as_of,
+                office_id=office_id,
+                deleted=include_deleted or None,
+            )
+            out = _json({
+                "agency_id": agency_id,
+                "as_of": as_of,
+                "client_ids": result,
+                "count": len(result),
+            })
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -190,12 +208,18 @@ async def get_client(
         client_id: HawkSoft client number.
         include: Sections to include: details, people, contacts, claims, policies, invoices.
     """
-    GetClientInput(agency_id=agency_id, client_id=client_id, include=include)  # type: ignore[arg-type]  # Pydantic Literal narrowing
-    try:
-        result = await _client().get_client(agency_id, client_id, include=include)
-        return _json(result)
-    except HawkSoftError:
-        raise
+    with audit_tool_call(
+        "get_client",
+        {"agency_id": agency_id, "client_id": client_id, "include": include},
+    ) as audit:
+        GetClientInput(agency_id=agency_id, client_id=client_id, include=include)  # type: ignore[arg-type]  # Pydantic Literal narrowing
+        try:
+            result = await _client().get_client(agency_id, client_id, include=include)
+            out = _json(result)
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -206,12 +230,18 @@ async def get_clients_bulk(agency_id: int, client_numbers: list[int]) -> str:
         agency_id: HawkSoft agency ID.
         client_numbers: List of client numbers (1-200 per call).
     """
-    BulkClientsInput(agency_id=agency_id, client_numbers=client_numbers)
-    try:
-        result = await _client().get_clients_bulk(agency_id, client_numbers)
-        return _json({"agency_id": agency_id, "clients": result, "count": len(result)})
-    except HawkSoftError:
-        raise
+    with audit_tool_call(
+        "get_clients_bulk",
+        {"agency_id": agency_id, "client_count": len(client_numbers)},
+    ) as audit:
+        BulkClientsInput(agency_id=agency_id, client_numbers=client_numbers)
+        try:
+            result = await _client().get_clients_bulk(agency_id, client_numbers)
+            out = _json({"agency_id": agency_id, "clients": result, "count": len(result)})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -231,21 +261,27 @@ async def search_client_by_policy(
         policy_number: Exact policy number.
         include: Sections to include.
     """
-    SearchByPolicyInput(
-        agency_id=agency_id, policy_number=policy_number, include=include  # type: ignore[arg-type]
-    )
-    try:
-        result = await _client().search_client_by_policy(
-            agency_id, policy_number, include=include
+    with audit_tool_call(
+        "search_client_by_policy",
+        {"agency_id": agency_id, "policy_number": policy_number, "include": include},
+    ) as audit:
+        SearchByPolicyInput(
+            agency_id=agency_id, policy_number=policy_number, include=include  # type: ignore[arg-type]
         )
-        return _json({
-            "agency_id": agency_id,
-            "policy_number": policy_number,
-            "clients": result,
-            "count": len(result),
-        })
-    except HawkSoftError:
-        raise
+        try:
+            result = await _client().search_client_by_policy(
+                agency_id, policy_number, include=include
+            )
+            out = _json({
+                "agency_id": agency_id,
+                "policy_number": policy_number,
+                "clients": result,
+                "count": len(result),
+            })
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 # ----- Write tools -----------------------------------------------------------
@@ -294,39 +330,52 @@ async def create_log_note(
         task_assigned_to_email: Required when assigned_to_role is SpecifiedUser.
         task_category: Optional category label.
     """
-    try:
-        channel_int = resolve_channel(channel)
-    except ValueError:
-        raise
-    task = None
-    if task_title and task_due_date and task_assigned_to_role:
-        task = {
-            "title": task_title,
-            "description": task_description or "",
-            "dueDate": task_due_date,
-            "assignedToRole": task_assigned_to_role,
-        }
-        if task_assigned_to_email:
-            task["assignedToEmail"] = task_assigned_to_email
-        if task_category:
-            task["category"] = task_category
-    try:
-        result = await _client().create_log_note(
-            agency_id,
-            client_id,
-            ref_id=_ensure_ref_id(ref_id),
-            ts=_ensure_ts(ts),
-            channel=channel_int,
-            description=description,
-            body=body,
-            policy_id=policy_id,
-            policy_index=policy_index,
-            action=action,
-            task=task,
-        )
-        return _json({"status": "ok", "response": result})
-    except HawkSoftError:
-        raise
+    with audit_tool_call(
+        "create_log_note",
+        {
+            "agency_id": agency_id,
+            "client_id": client_id,
+            "channel": channel,
+            "description": description,
+            "body": body,
+            "policy_id": policy_id,
+        },
+    ) as audit:
+        try:
+            channel_int = resolve_channel(channel)
+        except ValueError:
+            raise
+        task = None
+        if task_title and task_due_date and task_assigned_to_role:
+            task = {
+                "title": task_title,
+                "description": task_description or "",
+                "dueDate": task_due_date,
+                "assignedToRole": task_assigned_to_role,
+            }
+            if task_assigned_to_email:
+                task["assignedToEmail"] = task_assigned_to_email
+            if task_category:
+                task["category"] = task_category
+        try:
+            result = await _client().create_log_note(
+                agency_id,
+                client_id,
+                ref_id=_ensure_ref_id(ref_id),
+                ts=_ensure_ts(ts),
+                channel=channel_int,
+                description=description,
+                body=body,
+                policy_id=policy_id,
+                policy_index=policy_index,
+                action=action,
+                task=task,
+            )
+            out = _json({"status": "ok", "response": result})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -364,33 +413,47 @@ async def create_attachment(
         task_title, task_description, task_due_date, task_assigned_to_role,
         task_assigned_to_email, task_category: Optional follow-up task.
     """
-    try:
-        channel_int = resolve_channel(channel)
-    except ValueError:
-        raise
-    try:
-        result = await _client().create_attachment(
-            agency_id,
-            client_id,
-            ref_id=_ensure_ref_id(ref_id),
-            ts=_ensure_ts(ts),
-            channel=channel_int,
-            desc=desc,
-            log_note=log_note,
-            file_name=file_name,
-            file_ext=file_name.rsplit(".", 1)[-1] if "." in file_name else "",
-            file_b64=file_b64,
-            policy_id=policy_id,
-            task_title=task_title,
-            task_description=task_description,
-            task_due_date=task_due_date,
-            task_assigned_to_role=task_assigned_to_role,
-            task_assigned_to_email=task_assigned_to_email,
-            task_category=task_category,
-        )
-        return _json({"status": "ok", "response": result})
-    except HawkSoftError:
-        raise
+    with audit_tool_call(
+        "create_attachment",
+        {
+            "agency_id": agency_id,
+            "client_id": client_id,
+            "channel": channel,
+            "desc": desc,
+            "file_name": file_name,
+            "file_b64_size": len(file_b64),
+            "policy_id": policy_id,
+        },
+    ) as audit:
+        try:
+            channel_int = resolve_channel(channel)
+        except ValueError:
+            raise
+        try:
+            result = await _client().create_attachment(
+                agency_id,
+                client_id,
+                ref_id=_ensure_ref_id(ref_id),
+                ts=_ensure_ts(ts),
+                channel=channel_int,
+                desc=desc,
+                log_note=log_note,
+                file_name=file_name,
+                file_ext=file_name.rsplit(".", 1)[-1] if "." in file_name else "",
+                file_b64=file_b64,
+                policy_id=policy_id,
+                task_title=task_title,
+                task_description=task_description,
+                task_due_date=task_due_date,
+                task_assigned_to_role=task_assigned_to_role,
+                task_assigned_to_email=task_assigned_to_email,
+                task_category=task_category,
+            )
+            out = _json({"status": "ok", "response": result})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
+            raise
 
 
 @mcp.tool()
@@ -414,23 +477,29 @@ async def create_receipts(
             - ``invoices``: list of ``{"invoiceId": "<guid>", "amount": <float>}``
         Optional per receipt: refId, ts, policyId, officeId, payMethod, task.
     """
-    ReceiptsInput(agency_id=agency_id, client_id=client_id, receipts=receipts)  # type: ignore[arg-type]
-    # Resolve channel names in each receipt before sending
-    resolved = []
-    for receipt in receipts:
-        r = dict(receipt)
+    with audit_tool_call(
+        "create_receipts",
+        {"agency_id": agency_id, "client_id": client_id, "receipt_count": len(receipts)},
+    ) as audit:
+        ReceiptsInput(agency_id=agency_id, client_id=client_id, receipts=receipts)  # type: ignore[arg-type]
+        # Resolve channel names in each receipt before sending
+        resolved = []
+        for receipt in receipts:
+            r = dict(receipt)
+            try:
+                r["channel"] = resolve_channel(r["channel"])
+            except ValueError:
+                raise
+            r.setdefault("refId", _ensure_ref_id(r.get("refId")))
+            r.setdefault("ts", _ensure_ts(r.get("ts")))
+            resolved.append(r)
         try:
-            r["channel"] = resolve_channel(r["channel"])
-        except ValueError:
+            result = await _client().create_receipts(agency_id, client_id, resolved)
+            out = _json({"status": "ok", "results": result})
+            audit.set_result(out)
+            return out
+        except HawkSoftError:
             raise
-        r.setdefault("refId", _ensure_ref_id(r.get("refId")))
-        r.setdefault("ts", _ensure_ts(r.get("ts")))
-        resolved.append(r)
-    try:
-        result = await _client().create_receipts(agency_id, client_id, resolved)
-        return _json({"status": "ok", "results": result})
-    except HawkSoftError:
-        raise
 
 
 # ----- Resources / utilities -------------------------------------------------
@@ -453,7 +522,10 @@ async def list_channels_tool() -> str:
     Use this to discover the right ``channel`` value to pass into create_log_note,
     create_attachment, or create_receipts.
     """
-    return _json(list_channels())
+    with audit_tool_call("list_channels_tool", {}) as audit:
+        out = _json(list_channels())
+        audit.set_result(out)
+        return out
 
 
 def main() -> None:

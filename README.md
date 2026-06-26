@@ -200,6 +200,30 @@ pytest
 hawksoft-mcp
 ```
 
+## Security & audit logging
+
+Every tool call emits a structured JSONL audit record (one JSON object per
+line) to stderr by default. Each record has:
+
+```
+ts, tool, request_id, args, result_size, is_error, error_type, duration_ms
+```
+
+Sensitive fields are redacted before logging: `password`, `api_key`, `token`,
+`access_token`, `refresh_token`, `authorization`, `client_secret`. Long string
+values are truncated to 256 characters.
+
+To redirect to a file (e.g. for shipping to your log aggregator), set:
+
+```bash
+export HAWKSOFT_MCP_AUDIT_LOG=/var/log/hawksoft-mcp/audit.jsonl
+hawksoft-mcp
+```
+
+The audit log is fail-open: if the configured file cannot be opened (missing
+directory, permission denied), records fall back to stderr and the tool still
+returns its result.
+
 If you don't have HawkSoft credentials yet, the client will raise a clear error on first call — the server doesn't try to connect at import time.
 
 ---
