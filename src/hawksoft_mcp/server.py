@@ -113,8 +113,8 @@ async def list_agencies() -> str:
     try:
         result = await _client().list_agencies()
         return _json({"agency_ids": result, "count": len(result)})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -127,8 +127,8 @@ async def list_offices(agency_id: int) -> str:
     try:
         result = await _client().list_offices(agency_id)
         return _json({"agency_id": agency_id, "offices": result, "count": len(result)})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -170,8 +170,8 @@ async def list_changed_clients(
             "client_ids": result,
             "count": len(result),
         })
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -194,8 +194,8 @@ async def get_client(
     try:
         result = await _client().get_client(agency_id, client_id, include=include)
         return _json(result)
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -210,8 +210,8 @@ async def get_clients_bulk(agency_id: int, client_numbers: list[int]) -> str:
     try:
         result = await _client().get_clients_bulk(agency_id, client_numbers)
         return _json({"agency_id": agency_id, "clients": result, "count": len(result)})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -244,8 +244,8 @@ async def search_client_by_policy(
             "clients": result,
             "count": len(result),
         })
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 # ----- Write tools -----------------------------------------------------------
@@ -296,8 +296,8 @@ async def create_log_note(
     """
     try:
         channel_int = resolve_channel(channel)
-    except ValueError as e:
-        return _format_error(e)
+    except ValueError:
+        raise
     task = None
     if task_title and task_due_date and task_assigned_to_role:
         task = {
@@ -325,8 +325,8 @@ async def create_log_note(
             task=task,
         )
         return _json({"status": "ok", "response": result})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -366,8 +366,8 @@ async def create_attachment(
     """
     try:
         channel_int = resolve_channel(channel)
-    except ValueError as e:
-        return _format_error(e)
+    except ValueError:
+        raise
     try:
         result = await _client().create_attachment(
             agency_id,
@@ -389,8 +389,8 @@ async def create_attachment(
             task_category=task_category,
         )
         return _json({"status": "ok", "response": result})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 @mcp.tool()
@@ -421,16 +421,16 @@ async def create_receipts(
         r = dict(receipt)
         try:
             r["channel"] = resolve_channel(r["channel"])
-        except ValueError as e:
-            return _format_error(e)
+        except ValueError:
+            raise
         r.setdefault("refId", _ensure_ref_id(r.get("refId")))
         r.setdefault("ts", _ensure_ts(r.get("ts")))
         resolved.append(r)
     try:
         result = await _client().create_receipts(agency_id, client_id, resolved)
         return _json({"status": "ok", "results": result})
-    except HawkSoftError as e:
-        return _format_error(e)
+    except HawkSoftError:
+        raise
 
 
 # ----- Resources / utilities -------------------------------------------------
